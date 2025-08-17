@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Pac-Man - Enzo Maze with Chasing Ghosts</title>
+  <style>
+    body {
+      margin: 0;
+      background: black;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      margin: auto;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas" width="560" height="620"></canvas>
+<script>
+  // ─────────────────────────────────────────────────────────────
+  // Canvas Setup
+  // ─────────────────────────────────────────────────────────────
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // Grid properties
+  const tileSize = 20;
+  const rows = canvas.height / tileSize;
+  const cols = canvas.width / tileSize;
+
+  // Load the ghost sprite image (save your image as ghost.png in the same folder)
+  const ghostImage = new Image();
+  ghostImage.src = 'ghost.png';
+
+  // ─────────────────────────────────────────────────────────────
+  // Maze Initialization
+  // 0 = empty, 1 = wall, 2 = pellet
+  // ─────────────────────────────────────────────────────────────
+  let map;
+
+  function createMap() {
+    map = [];
+    for (let r = 0; r < rows; r++) {
+      map[r] = [];
+      for (let c = 0; c < cols; c++) {
+        // Create walls on the boundaries
+        if (r === 0 || r === rows - 1 || c === 0 || c === cols - 1) {
+          map[r][c] = 1;
+        } else {
+          map[r][c] = 2; // fill with pellets
+        }
+      }
+    }
+
+    // Define letter patterns for "E", "N", "Z", "O"
+    const letterE = [
+      [1,1,1,1,1],
+      [1,0,0,0,0],
+      [1,1,1,1,0],
+      [1,0,0,0,0],
+      [1,1,1,1,1]
+    ];
+    const letterN = [
+      [1,0,0,0,1],
+      [1,1,0,0,1],
+      [1,0,1,0,1],
+      [1,0,0,1,1],
+      [1,0,0,0,1]
+    ];
+    const letterZ = [
+      [1,1,1,1,1],
+      [0,0,0,1,0],
+      [0,0,1,0,0],
+      [0,1,0,0,0],
+      [1,1,1,1,1]
+    ];
+    const letterO = [
+      [0,1,1,1,0],
+      [1,0,0,0,1],
+      [1,0,0,0,1],
+      [1,0,0,0,1],
+      [0,1,1,1,0]
+    ];
+
+    // Helper to overlay a letter pattern onto the map
+    function overlayLetter(pattern, startRow, startCol) {
+      for (let r = 0; r < pattern.length; r++) {
+        for (let c = 0; c < pattern[r].length; c++) {
+          if (pattern[r][c] === 1) {
+            map[startRow + r][startCol + c] = 1;
+          }
+        }
+      }
+    }
+
+    // Center the word "ENZO"
+    const textWidth = 23; // 4 letters * 5 + 3 gaps = 23
+    const textHeight = 5;
+    const startCol = Math.floor((cols - textWidth) / 2);
+    const startRow = Math.floor((rows - textHeight) / 2);
+
+    overlayLetter(letterE, startRow, startCol);
+    overlayLetter(letterN, startRow, startCol + 6);
+    overlayLetter(letterZ, startRow, startCol + 12);
+    overlayLetter(letterO, startRow, startCol + 18);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Entities: Pac-Man & Ghosts
+  // ─────────────────────────────────────────────────────────────
+  let pacman, ghosts;
+
+  function initEntities() {
+    // Pac-Man properties (x, y are center coordinates)
+    pacman = {
+      x: tileSize * 1.5,
+      y: tileSize * 1.5,
+      radius: tileSize / 2 - 2,
+      speed: 2,
+      dir: { x: 0, y: 0 }
+    };
+
+    // Ghosts are now initialized at the center of their tiles.
+    ghosts = [
+      { x: tileSize * (cols - 2 + 0.5), y: tileSize * (rows - 2 + 0.5), speed: 2, dir: { x: 0, y: 0 } },
+      { x: tileSize * (cols - 2 + 0.5), y: tileSize * (1 + 0.5),          speed: 2, dir: { x: 0, y: 0 } },
+      { x: tileSize * (0 + 0.5),          y: tileSize * (rows - 2 + 0.5), speed: 2, dir: { x: 0, y: 0 } },
+      { x: tileSize * ((cols - 5) + 0.5),   y: tileSize * ((rows - 5) + 0.5), speed: 2, dir: { x: 0, y: 0 } }
+    ];
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Game Loop
+  // ─────────────────────────────────────────────────────────────
+  function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Update Functions
+  // ─────────────────────────────────────────────────────────────
+  function update() {
+    updatePacman();
+    updateGhosts();
+    checkCollision();
+  }
+
+  function updatePacman() {
+    let nextX = pacman.x + pacman.dir.x * pacman.speed;
+    let nextY = pacman.y + pacman.dir.y * pacman.speed;
+    let tileCol = Math.floor(nextX / tileSize);
+    let tileRow = Math.floor(nextY / tileSize);
+
+    if (map[tileRow][tileCol] !== 1) {
+      pacman.x = nextX;
+      pacman.y = nextY;
+      if (map[tileRow][tileCol] === 2) {
+        map[tileRow][tileCol] = 0;
+      }
+    }
+  }
+
+  function updateGhosts() {
+    ghosts.forEach(ghost => {
+      let ghostCol = Math.floor(ghost.x / tileSize);
+      let ghostRow = Math.floor(ghost.y / tileSize);
+
+      // Use a threshold of 5 pixels to determine if the ghost is near the center
+      const threshold = 5;
+      let inCenterX = Math.abs((ghost.x % tileSize) - tileSize / 2) < threshold;
+      let inCenterY = Math.abs((ghost.y % tileSize) - tileSize / 2) < threshold;
+
+      if (inCenterX && inCenterY) {
+        let pacCol = Math.floor(pacman.x / tileSize);
+        let pacRow = Math.floor(pacman.y / tileSize);
+        let bestDir = null;
+        let bestDist = Infinity;
+
+        const directions = [
+          { x: 0,  y: -1 },
+          { x: 1,  y: 0 },
+          { x: 0,  y: 1 },
+          { x: -1, y: 0 }
+        ];
+
+        for (let dir of directions) {
+          let newCol = ghostCol + dir.x;
+          let newRow = ghostRow + dir.y;
+          if (map[newRow][newCol] !== 1) {
+            let dist = Math.abs(newCol - pacCol) + Math.abs(newRow - pacRow);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestDir = dir;
+            }
+          }
+        }
+        if (bestDir) {
+          ghost.dir.x = bestDir.x;
+          ghost.dir.y = bestDir.y;
+        }
+      }
+
+      // Move ghost along its current direction
+      let nextGX = ghost.x + ghost.dir.x * ghost.speed;
+      let nextGY = ghost.y + ghost.dir.y * ghost.speed;
+      let nextGCol = Math.floor(nextGX / tileSize);
+      let nextGRow = Math.floor(nextGY / tileSize);
+      if (map[nextGRow][nextGCol] !== 1) {
+        ghost.x = nextGX;
+        ghost.y = nextGY;
+      } else {
+        ghost.dir.x = 0;
+        ghost.dir.y = 0;
+      }
+    });
+  }
+
+  function checkCollision() {
+    let pacCol = Math.floor(pacman.x / tileSize);
+    let pacRow = Math.floor(pacman.y / tileSize);
+    for (let ghost of ghosts) {
+      let ghostCol = Math.floor(ghost.x / tileSize);
+      let ghostRow = Math.floor(ghost.y / tileSize);
+      if (ghostCol === pacCol && ghostRow === pacRow) {
+        resetGame();
+        break;
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Draw Functions
+  // ─────────────────────────────────────────────────────────────
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawMap();
+    drawPacman();
+    drawGhosts();
+  }
+
+  function drawMap() {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (map[r][c] === 1) {
+          ctx.fillStyle = '#0000FF';
+          ctx.fillRect(c * tileSize, r * tileSize, tileSize, tileSize);
+        } else if (map[r][c] === 2) {
+          ctx.fillStyle = '#FFFF00';
+          ctx.beginPath();
+          ctx.arc(c * tileSize + tileSize / 2, r * tileSize + tileSize / 2, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  function drawPacman() {
+    let angle = 0;
+    if (pacman.dir.x < 0) angle = Math.PI;
+    else if (pacman.dir.x > 0) angle = 0;
+    else if (pacman.dir.y < 0) angle = 1.5 * Math.PI;
+    else if (pacman.dir.y > 0) angle = 0.5 * Math.PI;
+    let mouthAngle = 0.2;
+    let startAngle = angle + mouthAngle;
+    let endAngle = angle + Math.PI * 2 - mouthAngle;
+    ctx.fillStyle = '#FFFF00';
+    ctx.beginPath();
+    ctx.arc(pacman.x, pacman.y, pacman.radius, startAngle, endAngle, false);
+    ctx.lineTo(pacman.x, pacman.y);
+    ctx.fill();
+  }
+
+  // Draw ghosts using the custom ghost sprite
+  function drawGhosts() {
+    ghosts.forEach(ghost => {
+      ctx.drawImage(
+        ghostImage,
+        ghost.x - tileSize / 2,
+        ghost.y - tileSize / 2,
+        tileSize,
+        tileSize
+      );
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Reset Game
+  // ─────────────────────────────────────────────────────────────
+  function resetGame() {
+    createMap();
+    initEntities();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Keyboard Input for Pac-Man
+  // ─────────────────────────────────────────────────────────────
+  document.addEventListener('keydown', function (e) {
+    switch (e.key) {
+      case "ArrowUp":
+        pacman.dir = { x: 0, y: -1 };
+        break;
+      case "ArrowDown":
+        pacman.dir = { x: 0, y: 1 };
+        break;
+      case "ArrowLeft":
+        pacman.dir = { x: -1, y: 0 };
+        break;
+      case "ArrowRight":
+        pacman.dir = { x: 1, y: 0 };
+        break;
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Start the Game
+  // ─────────────────────────────────────────────────────────────
+  resetGame();
+  gameLoop();
+</script>
+</body>
+</html>
+
