@@ -1,4 +1,5 @@
 import pygame, sys, os
+import random
 
 # ---------- MAP Editor -----------------------------------
 MAP_TEXT = """
@@ -18,9 +19,30 @@ MAP_TEXT = """
 ####################
 """.strip("\n")
 
+# HARD MAP. PACMAN ALWAYS GETS TRAPPED
+# MAP_TEXT = """
+# ############################
+# #............P.............#
+# #.##*###.####.###.####.###.#
+# #......o............o......#
+# #.##.#...########.########.#
+# #.##.#......##.........o##.#
+# #.##.#.####.##....##.#####.#
+# #.##o.......##.#..##.......#
+# #.######..#.##.#..##.......#
+# #.######..#.##.#..########.#
+# #....o..............o......#
+# #.#.####.#     # #.###.###.#
+# #.#......#GG GG#.#.........#
+# #.#.####.###.###.#.###.###.#
+# #......o..............o....#
+# ############################
+# """.strip("\n")
+
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
-FPS = 60
+# FPS = 60   # for testing normal pace
+FPS = 120  # for rapid testing AI agents
 GHOST_SPRITE = 'ghost.png'
 
 # Tile codes
@@ -36,9 +58,9 @@ PACMAN_C= (255, 255, 0)
 # Defining How the map generator recognizes the element
 CHAR2TILE = {'#': WALL, '.': PELLET, ' ': EMPTY, 'o':POWER}
 
+
+
 # --- Map parsing -----------------------------------------------------------------
-
-
 def load_map_from_text(txt):
     lines = [line.rstrip('\n') for line in txt.splitlines()]
     rows, cols = len(lines), max(len(r) for r in lines)
@@ -77,6 +99,138 @@ def manhattan(a_r, a_c, b_r, b_c): # Calculates distance between two elements (i
 def clamp(v, lo, hi): # prevent ghosts from targeting a tile outside the maze
     return max(lo, min(hi, v))
 
+# --- Utilities: Reflex Agent "AI" config ------------------------------------
+AI_CONTROL = True   # set False to go back to keyboard control
+
+REFLEX_WEIGHTS = {
+    "stop_penalty": 250.0,      # discourage standing still
+    "ghost_close_penalty": 120.0, # penalty if a non-frightened ghost within dist <= 1
+    "ghost_near_penalty": 40.0,   # penalty if a non-frightened ghost within dist == 2
+    "food_gain": 2.5,           # 1 / (1 + min_food_dist)
+    "capsule_gain": 2.5,        # 1 / (1 + min_capsule_dist)
+    "scared_ghost_gain": 3.0,   # 1 / (1 + min_scared_ghost_dist)
+    "step_cost": 0.0,           # small negative per move if you want
+    "reverse_penalty":10000
+}
+
+#------ Utilities: Game State Loggers for AI Component ---------------------
+
+ACTIONS = [(0,0), (0,-1), (1,0), (0,1), (-1,0)]  # Stop, Up, Right, Down, Left
+
+def get_legal_actions(grid, r, c):
+    rows, cols = len(grid), len(grid[0])
+    legal = []
+    for dx, dy in ACTIONS:
+        nr, nc = r + dy, c + dx
+        if dx == 0 and dy == 0:
+            legal.append((dx,dy))  # Stop is always "legal"
+        elif 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] != WALL:
+            legal.append((dx,dy))
+    return legal
+
+def successor_tile(r, c, dx, dy, grid):
+    """Return tile after taking (dx,dy) from (r,c). If blocked, stay put."""
+    nr, nc = r + dy, c + dx
+    if 0 <= nr < len(grid) and 0 <= nc < len(grid[0]) and grid[nr][nc] != WALL:
+        return nr, nc
+    return r, c
+
+def tiles_of_type(grid, target):
+    return [(rr, cc) for rr, row in enumerate(grid) for cc, v in enumerate(row) if v == target]
+
+def reflex_evaluation(grid, pac_tile, action, ghosts, weights): # Scores which legal action is best 
+    """Higher is better."""
+    (pr, pc) = pac_tile
+    (dx, dy) = action
+    nr, nc = successor_tile(pr, pc, dx, dy, grid)
+
+    evf = 0.0
+
+    # Step cost (optional shaping)
+    evf -= weights["step_cost"]
+
+    # Stop penalty
+    if (dx, dy) == (0, 0):
+        evf -= weights["stop_penalty"]
+
+    # --- Food feature: closer to nearest pellet is better
+    pellets = tiles_of_type(grid, PELLET)
+    if pellets:
+        min_food = min(manhattan(nr, nc, fr, fc) for (fr, fc) in pellets)
+        evf += weights["food_gain"] * (1.0 / (1.0 + min_food))
+
+    # --- Capsule feature: encourage grabbing POWER
+    capsules = tiles_of_type(grid, POWER)
+    if capsules:
+        min_caps = min(manhattan(nr, nc, cr, cc) for (cr, cc) in capsules)
+        evf += weights["capsule_gain"] * (1.0 / (1.0 + min_caps))
+
+    # --- Ghost proximity: avoid active ghosts, chase scared ones
+    ghost_tiles = [ (int(g.y // TILE_SIZE), int(g.x // TILE_SIZE), g.frightened) for g in ghosts ]
+
+    # penalties for active ghosts
+    for (gr, gc, frightened) in ghost_tiles:
+        d = manhattan(nr, nc, gr, gc)
+        if not frightened:
+            if d <= 1:
+                evf -= weights["ghost_close_penalty"]
+            elif d == 2:
+                evf -= weights["ghost_near_penalty"]
+
+    # small incentive to approach scared ghosts
+    scared_positions = [(gr, gc) for (gr, gc, fr) in ghost_tiles if fr]
+    if scared_positions:
+        min_sg = min(manhattan(nr, nc, gr, gc) for (gr, gc) in scared_positions)
+        evf += weights["scared_ghost_gain"] * (1.0 / (1.0 + min_sg))
+
+    # Slight nudge toward actually eating something immediately
+    # (these are tiny because you'll also get score from your game logic)
+    if grid[nr][nc] == PELLET:
+        evf += 0.2
+    elif grid[nr][nc] == POWER:
+        evf += 0.5
+
+    return evf
+
+def choose_action_reflex(grid, pac, ghosts, weights=REFLEX_WEIGHTS):
+    pr, pc = pac.tile_pos()
+    legal = get_legal_actions(grid, pr, pc)
+
+    # Optional. Prevents reversing to avoid getting stuck
+    # opposite = (-pac.dir_x, -pac.dir_y) if (pac.dir_x, pac.dir_y) != (0,0) else None
+    # legal = [a for a in legal if a != opposite]  # uncomment to forbid immediate reversals
+
+    # --- Reverse Score Penalt: Count + Penalty Mechanic --------------------
+    scores = []
+    max_reverse = 2 # How much allowable reverse before adding penalty
+    cur_dir = (pac.dir_x, pac.dir_y)
+    opposite = (-cur_dir[0], -cur_dir[1]) if cur_dir != (0,0) else None
+    for a in legal:
+        s = reflex_evaluation(grid, (pr, pc), a, ghosts, weights)
+        if cur_dir != (0,0) and a == opposite and pac.reverse_count >= max_reverse:
+            
+            excess = pac.reverse_count - max_reverse + 1
+            s -= weights["reverse_penalty"]* (2 ** (excess - 1))
+            print('reverse', s) # seeing how the reverse penalty increases
+        scores.append(s)
+
+
+    #------ Selecting the Best Legal Move Based on scores-------------
+    # scores = [reflex_evaluation(grid, (pr, pc), a, ghosts, weights) for a in legal]
+    best = max(scores)
+    # break ties randomly (like Berkeley)
+    candidates = [i for i, s in enumerate(scores) if s == best]
+    idx = random.choice(candidates)
+
+
+    # --- Reverse Score Penalty: update reversal count ---
+    if cur_dir != (0,0) and legal[idx] == opposite:
+        pac.reverse_count += 1
+    else:
+        pac.reverse_count = 0
+    
+    return legal[idx]
+
 # --- Entities: PACMAN ------------------------------------------------
 class Pacman:
     def __init__(self, r, c):
@@ -89,6 +243,7 @@ class Pacman:
         self.speed = 2.0  # divides TILE_SIZE (20 % 2 == 0)
         self.radius = TILE_SIZE // 2 - 2
         self._EPS_CENTER = 0.5
+        self.reverse_count = 0
 
     def tile_pos(self):
         return int(self.y // TILE_SIZE), int(self.x // TILE_SIZE)
@@ -424,7 +579,13 @@ def main():
                 if event.key == pygame.K_RIGHT: pac.set_desired_dir(1,  0, grid)
                 if event.key == pygame.K_r:     reset_game()
 
-        # Pac-Man update + consume
+        # ------ AI control. Overwrite Key movement commands based on AI Decisions -------------------
+        if AI_CONTROL:
+            if pac._is_centered():
+                dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS)
+                pac.set_desired_dir(dx, dy, grid)
+
+        # Pac-Man update + consume mechanic 
         eaten = pac.update(grid)
         if eaten == 'pellet':
             score += 10
@@ -435,13 +596,13 @@ def main():
             for g in ghosts:
                 g.frightened = True
 
-        # Collecting Data to update Ghost Strategy
+        # Collecting Pacman Data to update Ghost Strategy 
         pr, pc = pac.tile_pos() # Colelct Pacman's position
         rows_cols = (ROWS, COLS)
         blinky = ghosts[0] if ghosts else None # Allows Inky's Strategy to target a tile ahead of pacman dependent on the distance of pacman and blinky
         pac_dx, pac_dy = pac.dir_x, pac.dir_y # Collects direction of pacman's movement, this allows Pinky and Inky to decide their chase strategy to pacman
 
-        # Decrement frightened timer
+        # Decrement frightened timer 
         if frightened_timer > 0:
             frightened_timer -= 1
             if frightened_timer == 0:
@@ -449,7 +610,7 @@ def main():
                     g.frightened = False
 
 
-        # Ghosts update + collisions
+        # Ghosts update + collisions mechanic
         for g in ghosts:
             g.update(grid, pr, pc, pac_dx, pac_dy, blinky=blinky, rows_cols=rows_cols)
             gr, gc = int(g.y//TILE_SIZE), int(g.x//TILE_SIZE)
