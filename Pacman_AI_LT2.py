@@ -34,30 +34,31 @@ MAP_TEXT = """
 ####################
 """.strip("\n")
 
-# HARD MAP. PACMAN ALWAYS GETS TRAPPED
-MAP_TEXT = """
-############################
-#............P.............#
-#.##*###.####.###.####.###.#
-#......o............o......#
-#.##.#...########.########.#
-#.##.#......##.........o##.#
-#.##.#.####.##....##.#####.#
-#.##o.......##.#..##.......#
-#.######..#.##.#..##.......#
-#.######..#.##.#..########.#
-#....o..............o......#
-#.#.####.#     # #.###.###.#
-#.#......#GG GG#.#.........#
-#.#.####.###.###.#.###.###.#
-#......o..............o....#
-############################
-""".strip("\n")
+# # HARD MAP. PACMAN ALWAYS GETS TRAPPED
+# MAP_TEXT = """
+# ############################
+# #............P.............#
+# #.##*###.####.###.####.###.#
+# #......o............o......#
+# #.##.#...########.########.#
+# #.##.#......##.........o##.#
+# #.##.#.####.##....##.#####.#
+# #.##o.......##.#..##.......#
+# #.######..#.##.#..##.......#
+# #.######..#.##.#..########.#
+# #....o..............o......#
+# #.#.####.#     # #.###.###.#
+# #.#......#GG GG#.#.........#
+# #.#.####.###.###.#.###.###.#
+# #......o..............o....#
+# ############################
+# """.strip("\n")
 
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
 # FPS = 60   # for testing normal pace
-FPS = 120  # for rapid testing AI agents
+# FPS = 120  # for rapid testing AI agents
+FPS = 180  # for Faster rapid testing AI agents
 GHOST_SPRITE = 'ghost.png'
 
 # Tile codes
@@ -226,7 +227,7 @@ def choose_action_reflex(grid, pac, ghosts, weights=REFLEX_WEIGHTS):
             
             excess = pac.reverse_count - max_reverse + 1
             s -= weights["reverse_penalty"]* (2 ** (excess - 1))
-            print('reverse', s) # seeing how the reverse penalty increases
+            # print('reverse', s) # seeing how the reverse penalty increases
         scores.append(s)
 
 
@@ -541,81 +542,58 @@ def count_pellets(g):
 
 # --- Setup & main loop: API CALLING --------------------------------------------------------------------------------------------------
 def run_single_game_telemetry(
-    layout_name: str = "inline",   # you’re using MAP_TEXT inline; keep a name for logs
+    layout_name: str = "inline",
     seed: int | None = None,
     max_time_sec: float | None = None,
     max_moves: int | None = None,
     headless: bool = True
 ) -> dict:
-    """
-    Runs ONE episode:
-      - WIN: Pacman clears all pellets (first time) -> stop
-      - LOSS: Pacman collides with a non-frightened ghost -> stop
-      - DNF: exceeds max_time_sec or max_moves -> stop
-
-    Returns a dict with score, time, status, pellets, etc.
-    """
-
-    # ---- RNG -----------
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
     random.seed(seed)
 
-    # ---- Headless setup (no window) -----------
     if headless:
         os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     pygame.init()
 
-    # ---- Build game from your inline map ----------------
     grid, pac, ghosts, ROWS, COLS, WIDTH, HEIGHT = make_game_from_text(MAP_TEXT)
 
-    # Create a tiny surface in headless so font/surfaces don’t explode if referenced
     screen = None
+    font = None
     if not headless:
         screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("Pac-Man (batch)")
+        font = pygame.font.SysFont(None, 18)
     clock = pygame.time.Clock()
 
-    # ---- Episode state -----------------
     pellets_left = count_pellets(grid)
     pellets_total = int(pellets_left)
     pellets_eaten = 0
     score = 0
     ghost_chain = 0
 
-    # frightened config --------------------
     FRIGHTENED_SECS = 6
     FRIGHTENED_FRAMES = int(FPS * FRIGHTENED_SECS)
     frightened_timer = 0
 
-    # soft reset: re-center pac/ghosts after collision in your main loop.
-    # In this API, a collision (non-frightened) ends the episode as LOSS.
-    def lose_and_stop():
-        return "LOSS"
-
-    # timing & step counters
     start_time = time.perf_counter()
     moves = 0
     status = None
 
     running = True
     while running:
-        # pacing like your main loop
         clock.tick(FPS)
         moves += 1
 
-        # --- pump events (don’t block). Allow window close in non-headless
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 status = "DNF"
                 running = False
 
-        # --- AI control: overwrite movement when centered
         if AI_CONTROL and pac._is_centered():
             dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS)
             pac.set_desired_dir(dx, dy, grid)
 
-        # --- Pac-Man update + consume
         eaten = pac.update(grid)
         if eaten == 'pellet':
             score += 10
@@ -627,42 +605,35 @@ def run_single_game_telemetry(
             for g in ghosts:
                 g.frightened = True
 
-        # --- Collect pac data for ghosts --------------------
         pr, pc = pac.tile_pos()
         rows_cols = (ROWS, COLS)
         blinky = ghosts[0] if ghosts else None
         pac_dx, pac_dy = pac.dir_x, pac.dir_y
 
-        # --- Frightened timer decrement
         if frightened_timer > 0:
             frightened_timer -= 1
             if frightened_timer == 0:
                 for g in ghosts:
                     g.frightened = False
 
-        # --- Ghosts update + collision
         for g in ghosts:
             g.update(grid, pr, pc, pac_dx, pac_dy, blinky=blinky, rows_cols=rows_cols)
             gr, gc = int(g.y // TILE_SIZE), int(g.x // TILE_SIZE)
             if (gr, gc) == (pr, pc):
                 if g.frightened:
                     ghost_chain += 1
-                    points = 200 * (2 ** (ghost_chain - 1))
-                    score += points
+                    score += 200 * (2 ** (ghost_chain - 1))
                     g.respawn_to_spawn()
                     g.frightened = False
-                    continue
                 else:
-                    status = lose_and_stop()
+                    status = "LOSS"
                     running = False
                     break
 
-        # --- WIN check: if all pellets eaten, WIN and stop (don’t refill)
         if status is None and pellets_left <= 0:
             status = "WIN"
             running = False
 
-        # --- DNF by caps
         elapsed = time.perf_counter() - start_time
         if status is None and (
             (max_time_sec is not None and elapsed >= max_time_sec) or
@@ -671,17 +642,37 @@ def run_single_game_telemetry(
             status = "DNF"
             running = False
 
-        # (No drawing in headless; if you really want, you can copy your draw code here when not headless)
+        # ---- RENDER (only when not headless) ----
+        if not headless and screen is not None:
+            screen.fill(BLACK)
+            # tiles
+            for r in range(ROWS):
+                for c in range(COLS):
+                    cell = grid[r][c]
+                    if cell == WALL:
+                        pygame.draw.rect(screen, WALL_C, (c*TILE_SIZE, r*TILE_SIZE, TILE_SIZE, TILE_SIZE))
+                    elif cell == PELLET:
+                        pygame.draw.circle(screen, PELLET_C, (c*TILE_SIZE + TILE_SIZE//2, r*TILE_SIZE + TILE_SIZE//2), 3)
+                    elif cell == POWER:
+                        pygame.draw.circle(screen, POWER_C, (c*TILE_SIZE + TILE_SIZE//2, r*TILE_SIZE + TILE_SIZE//2), 7)
+            # actors
+            pac.draw(screen)
+            for g in ghosts:
+                g.draw(screen)
+            # HUD (optional)
+            if font is not None:
+                txt = font.render(f"Score: {score}  Pellets left: {pellets_left}", True, (200,200,200))
+                screen.blit(txt, (6, 4))
+            pygame.display.flip()
 
     elapsed_sec = time.perf_counter() - start_time
     completion_pct = (pellets_eaten / pellets_total * 100.0) if pellets_total else 0.0
 
-    # Clean up headless pygame
-    if headless:
+    # ---- CLEANUP (both modes) ----
+    if screen is not None:
         pygame.display.quit()
-        pygame.quit()
+    pygame.quit()
 
-    # Returning game results for data logging
     return asdict(GameResult(
         layout=layout_name,
         seed=seed,
@@ -842,5 +833,5 @@ def main():
     pygame.quit(); sys.exit()
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
