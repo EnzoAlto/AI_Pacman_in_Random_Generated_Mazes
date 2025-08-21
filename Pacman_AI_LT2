@@ -1,5 +1,22 @@
 import pygame, sys, os
 import random
+from dataclasses import dataclass, asdict
+import time, random, os
+
+# -------------- TELEMETRI API for Data Logging ---------------------------
+@dataclass
+class GameResult:
+    layout: str
+    seed: int
+    status: str          # "WIN" | "LOSS" | "DNF"
+    score: int
+    elapsed_sec: float
+    moves: int
+    pellets_total: int
+    pellets_eaten: int
+    completion_pct: float
+
+
 
 # ---------- MAP Editor -----------------------------------
 MAP_TEXT = """
@@ -11,8 +28,6 @@ MAP_TEXT = """
 #.#######..#######.#
 #..o..........o....#
 #.#######..#######.#
-#..................#
-#.#######..#######.#
 #.#..G.G...G.G...#.#
 #.#.#####..#####.#.#
 #....o.......o.....#
@@ -20,24 +35,24 @@ MAP_TEXT = """
 """.strip("\n")
 
 # HARD MAP. PACMAN ALWAYS GETS TRAPPED
-# MAP_TEXT = """
-# ############################
-# #............P.............#
-# #.##*###.####.###.####.###.#
-# #......o............o......#
-# #.##.#...########.########.#
-# #.##.#......##.........o##.#
-# #.##.#.####.##....##.#####.#
-# #.##o.......##.#..##.......#
-# #.######..#.##.#..##.......#
-# #.######..#.##.#..########.#
-# #....o..............o......#
-# #.#.####.#     # #.###.###.#
-# #.#......#GG GG#.#.........#
-# #.#.####.###.###.#.###.###.#
-# #......o..............o....#
-# ############################
-# """.strip("\n")
+MAP_TEXT = """
+############################
+#............P.............#
+#.##*###.####.###.####.###.#
+#......o............o......#
+#.##.#...########.########.#
+#.##.#......##.........o##.#
+#.##.#.####.##....##.#####.#
+#.##o.......##.#..##.......#
+#.######..#.##.#..##.......#
+#.######..#.##.#..########.#
+#....o..............o......#
+#.#.####.#     # #.###.###.#
+#.#......#GG GG#.#.........#
+#.#.####.###.###.#.###.###.#
+#......o..............o....#
+############################
+""".strip("\n")
 
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
@@ -486,7 +501,11 @@ class Clyde(Ghost):
         # scatter corner: bottom-left (near row=rows-2, col=1)
         return rows-2, 1
 
-# --- Setup & main loop --------------------------------------------------------------------------------------------------
+
+
+
+
+# --- Setup & main loop: MAP GENERATION --------------------------------------------------------------------------------------------------
 def make_game_from_text(txt):
     grid, pac_spawn, ghost_spawns = load_map_from_text(txt)
     rows, cols = len(grid), len(grid[0])
@@ -520,6 +539,163 @@ def count_pellets(g):
     return sum(cell == PELLET for row in g for cell in row)
 
 
+# --- Setup & main loop: API CALLING --------------------------------------------------------------------------------------------------
+def run_single_game_telemetry(
+    layout_name: str = "inline",   # you’re using MAP_TEXT inline; keep a name for logs
+    seed: int | None = None,
+    max_time_sec: float | None = None,
+    max_moves: int | None = None,
+    headless: bool = True
+) -> dict:
+    """
+    Runs ONE episode:
+      - WIN: Pacman clears all pellets (first time) -> stop
+      - LOSS: Pacman collides with a non-frightened ghost -> stop
+      - DNF: exceeds max_time_sec or max_moves -> stop
+
+    Returns a dict with score, time, status, pellets, etc.
+    """
+
+    # ---- RNG -----------
+    if seed is None:
+        seed = random.randint(0, 2**31 - 1)
+    random.seed(seed)
+
+    # ---- Headless setup (no window) -----------
+    if headless:
+        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    pygame.init()
+
+    # ---- Build game from your inline map ----------------
+    grid, pac, ghosts, ROWS, COLS, WIDTH, HEIGHT = make_game_from_text(MAP_TEXT)
+
+    # Create a tiny surface in headless so font/surfaces don’t explode if referenced
+    screen = None
+    if not headless:
+        screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption("Pac-Man (batch)")
+    clock = pygame.time.Clock()
+
+    # ---- Episode state -----------------
+    pellets_left = count_pellets(grid)
+    pellets_total = int(pellets_left)
+    pellets_eaten = 0
+    score = 0
+    ghost_chain = 0
+
+    # frightened config --------------------
+    FRIGHTENED_SECS = 6
+    FRIGHTENED_FRAMES = int(FPS * FRIGHTENED_SECS)
+    frightened_timer = 0
+
+    # soft reset: re-center pac/ghosts after collision in your main loop.
+    # In this API, a collision (non-frightened) ends the episode as LOSS.
+    def lose_and_stop():
+        return "LOSS"
+
+    # timing & step counters
+    start_time = time.perf_counter()
+    moves = 0
+    status = None
+
+    running = True
+    while running:
+        # pacing like your main loop
+        clock.tick(FPS)
+        moves += 1
+
+        # --- pump events (don’t block). Allow window close in non-headless
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                status = "DNF"
+                running = False
+
+        # --- AI control: overwrite movement when centered
+        if AI_CONTROL and pac._is_centered():
+            dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS)
+            pac.set_desired_dir(dx, dy, grid)
+
+        # --- Pac-Man update + consume
+        eaten = pac.update(grid)
+        if eaten == 'pellet':
+            score += 10
+            pellets_left -= 1
+            pellets_eaten += 1
+        elif eaten == 'power':
+            score += 50
+            frightened_timer = FRIGHTENED_FRAMES
+            for g in ghosts:
+                g.frightened = True
+
+        # --- Collect pac data for ghosts --------------------
+        pr, pc = pac.tile_pos()
+        rows_cols = (ROWS, COLS)
+        blinky = ghosts[0] if ghosts else None
+        pac_dx, pac_dy = pac.dir_x, pac.dir_y
+
+        # --- Frightened timer decrement
+        if frightened_timer > 0:
+            frightened_timer -= 1
+            if frightened_timer == 0:
+                for g in ghosts:
+                    g.frightened = False
+
+        # --- Ghosts update + collision
+        for g in ghosts:
+            g.update(grid, pr, pc, pac_dx, pac_dy, blinky=blinky, rows_cols=rows_cols)
+            gr, gc = int(g.y // TILE_SIZE), int(g.x // TILE_SIZE)
+            if (gr, gc) == (pr, pc):
+                if g.frightened:
+                    ghost_chain += 1
+                    points = 200 * (2 ** (ghost_chain - 1))
+                    score += points
+                    g.respawn_to_spawn()
+                    g.frightened = False
+                    continue
+                else:
+                    status = lose_and_stop()
+                    running = False
+                    break
+
+        # --- WIN check: if all pellets eaten, WIN and stop (don’t refill)
+        if status is None and pellets_left <= 0:
+            status = "WIN"
+            running = False
+
+        # --- DNF by caps
+        elapsed = time.perf_counter() - start_time
+        if status is None and (
+            (max_time_sec is not None and elapsed >= max_time_sec) or
+            (max_moves is not None and moves >= max_moves)
+        ):
+            status = "DNF"
+            running = False
+
+        # (No drawing in headless; if you really want, you can copy your draw code here when not headless)
+
+    elapsed_sec = time.perf_counter() - start_time
+    completion_pct = (pellets_eaten / pellets_total * 100.0) if pellets_total else 0.0
+
+    # Clean up headless pygame
+    if headless:
+        pygame.display.quit()
+        pygame.quit()
+
+    # Returning game results for data logging
+    return asdict(GameResult(
+        layout=layout_name,
+        seed=seed,
+        status=status or "DNF",
+        score=int(score),
+        elapsed_sec=round(elapsed_sec, 6),
+        moves=int(moves),
+        pellets_total=int(pellets_total),
+        pellets_eaten=int(pellets_eaten),
+        completion_pct=round(completion_pct, 2),
+    ))
+
+
+# --- Setup & main loop: MAIN LOOP RUN --------------------------------------------------------------------------------------------------
 
 def main():
     pygame.init()
@@ -666,5 +842,5 @@ def main():
     pygame.quit(); sys.exit()
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
