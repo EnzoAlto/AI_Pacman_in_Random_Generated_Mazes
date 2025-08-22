@@ -85,7 +85,7 @@ def load_map_from_text(txt):
     grid = [[EMPTY]*cols for _ in range(rows)]
     pac_spawn = None
     ghost_spawns = []
-
+    #test
     for r, row in enumerate(lines):
         for c, ch in enumerate(row):
             if ch in CHAR2TILE:
