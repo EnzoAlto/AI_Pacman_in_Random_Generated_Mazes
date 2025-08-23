@@ -20,40 +20,40 @@ class GameResult:
 
 
 # ---------- MAP Editor -----------------------------------
-# MAP_TEXT = """
-# ####################
-# #...############...#
-# #.#......o.......#.#
-# #.###.########.###.#
-# #........P.........#
-# #.#######..#######.#
-# #..o..........o....#
-# #.#######..#######.#
-# #.#..G.G...G.G...#.#
-# #.#.#####..#####.#.#
-# #....o.......o.....#
-# ####################
-# """.strip("\n")
+MAP_TEXT = """
+####################
+#...############...#
+#.#......o.......#.#
+#.###.########.###.#
+#........P.........#
+#.#######..#######.#
+#..o..........o....#
+#.#.#####..#####.#.#
+#.#..G.G...G.G...#.#
+#.#.#####..#####.#.#
+#....o.......o.....#
+####################
+""".strip("\n")
 
 # # HARD MAP. PACMAN ALWAYS GETS TRAPPED
-MAP_TEXT = """
-############################
-#............P.............#
-#.##*###.####.###.####.###.#
-#......o............o......#
-#.##.#...########.########.#
-#.##.#......##.........o##.#
-#.##.#.####.##....##.#####.#
-#.##o.......##.#..##.......#
-#.######..#.##.#..##.......#
-#.######..#.##.#..########.#
-#....o..............o......#
-#.#.####.#     # #.###.###.#
-#.#......#GG GG#.#.........#
-#.#.####.###.###.#.###.###.#
-#......o..............o....#
-############################
-""".strip("\n")
+# MAP_TEXT = """
+# ############################
+# #............P.............#
+# #.##*###.####.###.####.###.#
+# #......o............o......#
+# #.##.#...########.########.#
+# #.##.#......##..........##.#
+# #.##.#.####.##....##.#####.#
+# #.##........##.#..##.......#
+# #.######..#.##.#..##.......#
+# #.######..#.##.#..########.#
+# #..........................#
+# #.#.####.#     # #.###.###.#
+# #.#..o...#GG GG#.#...o.....#
+# #.#.####.###.###.#.###.###.#
+# #..........................#
+# ############################
+# """.strip("\n")
 
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
@@ -128,7 +128,7 @@ AI_CONTROL = True   # set False to go back to keyboard control
 REFLEX_WEIGHTS = {
     "stop_penalty": 250.0,      # discourage standing still
     "ghost_close_penalty": 200.0, # penalty if a non-frightened ghost within dist <= 1. Maximum Caution to avoid Ghosts right beside pacman
-    "ghost_near_penalty": 30.0,   # penalty if a non-frightened ghost within dist == 2. Increases Caution for Approaching Ghosts
+    "ghost_near_penalty": 50.0,   # penalty if a non-frightened ghost within dist == 2. Increases Caution for Approaching Ghosts
     "food_gain": 5.5,           # 1 / (1 + min_food_dist)
     "capsule_gain": 5.5,        # 1 / (1 + min_capsule_dist)
     "scared_ghost_gain": 0,   # 1 / (1 + min_scared_ghost_dist)
@@ -160,6 +160,27 @@ def successor_tile(r, c, dx, dy, grid):
 
 def tiles_of_type(grid, target):
     return [(rr, cc) for rr, row in enumerate(grid) for cc, v in enumerate(row) if v == target]
+
+
+def ghost_legal_dirs_no_reverse(ghost, grid, allow_reverse_if_deadend=True): 
+    """
+    Return legal directions for this ghost.
+    If not frightened, disallow the exact reverse of its last_dir,
+    unless that's the *only* legal way out (dead-end) or allow_reverse_if_deadend=False.
+    """
+    candidates = [(0,-1),(1,0),(0,1),(-1,0)]  # U, R, D, L
+    legal = [(dx,dy) for (dx,dy) in candidates if ghost._can_move(grid, dx, dy)]
+
+    if ghost.frightened:
+        return legal or [(0,0)]
+
+    # Disallow immediate reverse (classic arcade behavior)
+    rev = (-ghost.last_dir[0], -ghost.last_dir[1])
+    if rev in legal and len(legal) > 1 and allow_reverse_if_deadend:
+        legal.remove(rev)
+
+    # If reverse is the only way out (dead-end), keep it so the ghost doesn't get stuck.
+    return legal or [rev] or [(0,0)]
 
 # --------- MAIN PENALTY MECHANICS and ALGORITHMS -----------------------------------------
 def reflex_evaluation(
@@ -403,6 +424,7 @@ class Ghost:
         self._EPS_CENTER = 0.5
         self.frightened = False
         self.color = color  # default red
+        self.last_dir = (0, 0)   # remember last chosen direction
 
     def _is_centered(self):
         cx = (self.x % TILE_SIZE) - TILE_SIZE/2
@@ -421,28 +443,33 @@ class Ghost:
         return 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] != WALL
 
     def _choose_towards_target(self, grid, tgt_r, tgt_c):
-        col = int(self.x // TILE_SIZE)
         row = int(self.y // TILE_SIZE)
+        col = int(self.x // TILE_SIZE)
         best_d, best = 1e9, (0, 0)
-        for dx, dy in [(0,-1),(1,0),(0,1),(-1,0)]:
-            if self._can_move(grid, dx, dy):
-                nr, nc = row + dy, col + dx
-                d = abs(nr - tgt_r) + abs(nc - tgt_c)
-                if d < best_d:
-                    best_d, best = d, (dx, dy)
+
+        for dx, dy in ghost_legal_dirs_no_reverse(self, grid):
+            nr, nc = row + dy, col + dx
+            d = abs(nr - tgt_r) + abs(nc - tgt_c)
+            if d < best_d:
+                best_d, best = d, (dx, dy)
+
         self.dir_x, self.dir_y = best
+        self.last_dir = best  # commit chosen direction
+        
 
     def _choose_dir_away(self, grid, pac_r, pac_c):
-        col = int(self.x // TILE_SIZE)
         row = int(self.y // TILE_SIZE)
+        col = int(self.x // TILE_SIZE)
         best_d, best = -1, (0, 0)
-        for dx, dy in [(0,-1),(1,0),(0,1),(-1,0)]:
-            if self._can_move(grid, dx, dy):
-                nr, nc = row + dy, col + dx
-                d = abs(nr - pac_r) + abs(nc - pac_c)
-                if d > best_d:
-                    best_d, best = d, (dx, dy)
+
+        for dx, dy in ghost_legal_dirs_no_reverse(self, grid):
+            nr, nc = row + dy, col + dx
+            d = abs(nr - pac_r) + abs(nc - pac_c)
+            if d > best_d:
+                best_d, best = d, (dx, dy)
+
         self.dir_x, self.dir_y = best
+        self.last_dir = best  # commit chosen direction
 
     def _advance_towards_next_center(self):
         if self.dir_x == 0 and self.dir_y == 0:
