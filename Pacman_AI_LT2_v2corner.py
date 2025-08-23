@@ -23,15 +23,15 @@ class GameResult:
 MAP_TEXT = """
 ####################
 #...############...#
-#.#......o.......#.#
+#o#..............#o#
 #.###.########.###.#
 #........P.........#
 #.#######..#######.#
-#..o..........o....#
+#..................#
 #.#.#####..#####.#.#
-#.#..G.G...G.G...#.#
+#.#o.G.G...G.G..o#.#
 #.#.#####..#####.#.#
-#....o.......o.....#
+#..................#
 ####################
 """.strip("\n")
 
@@ -127,13 +127,18 @@ AI_CONTROL = True   # set False to go back to keyboard control
 
 REFLEX_WEIGHTS = {
     "stop_penalty": 250.0,      # discourage standing still
-    "ghost_close_penalty": 200.0, # penalty if a non-frightened ghost within dist <= 1. Maximum Caution to avoid Ghosts right beside pacman
-    "ghost_near_penalty": 50.0,   # penalty if a non-frightened ghost within dist == 2. Increases Caution for Approaching Ghosts
-    "food_gain": 5.5,           # 1 / (1 + min_food_dist)
-    "capsule_gain": 3.5,        # 1 / (1 + min_capsule_dist)
+    "ghost_close_penalty":300.0, # penalty if a non-frightened ghost within dist <= 1. Maximum Caution to avoid Ghosts right beside pacman
+    "ghost_near_penalty":100.0,   # penalty if a non-frightened ghost within dist == 2. Increases Caution for Approaching Ghosts
+    "food_gain": 3.5,           # 1 / (1 + min_food_dist)
+    "capsule_gain": 8,        # 1 / (1 + min_capsule_dist)
     "scared_ghost_gain": 0,   # 1 / (1 + min_scared_ghost_dist)
     "step_cost": 0.0,           # small negative per move if you want
-    "reverse_penalty":100
+    "reverse_penalty":10,
+
+    # Corner Trap avoidance
+    "corner_penalty": 200,   # L-shaped pocket
+    "deadend_penalty": 0.0, # single exit
+    "trap_scale_by_ghost_proximity": False, # scale penalty by active ghost proximity
 }
 
 #------ Utilities: Game State Loggers for AI Component ---------------------
@@ -182,6 +187,38 @@ def ghost_legal_dirs_no_reverse(ghost, grid, allow_reverse_if_deadend=True):
     # If reverse is the only way out (dead-end), keep it so the ghost doesn't get stuck.
     return legal or [rev] or [(0,0)]
 
+def open_neighbors_count(grid, r, c):
+    rows, cols = len(grid), len(grid[0])
+    opens = 0
+    for dx, dy in [(0,-1),(1,0),(0,1),(-1,0)]:  # U,R,D,L
+        nr, nc = r + dy, c + dx
+        if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] != WALL:
+            opens += 1
+    return opens
+
+def is_deadend_tile(grid, r, c):
+    """A tile with only 1 walkable neighbor."""
+    if grid[r][c] == WALL:
+        return False
+    return open_neighbors_count(grid, r, c) == 1
+
+def is_corner_tile(grid, r, c, margin=3): # marin is how many tiles to consider the reguion as a corner
+
+    """
+    Corner *region* definition: within `margin` tiles of both a vertical and a horizontal border.
+    Examples (margin=2):
+      - rows 0..2 with cols 0..2   -> top-left corner region
+      - rows 0..2 with cols W-1-2..W-1 -> top-right
+      - rows H-1-2..H-1 with cols 0..2 -> bottom-left
+      - rows H-1-2..H-1 with cols W-1-2..W-1 -> bottom-right
+    """
+    rows, cols = len(grid), len(grid[0])
+    near_top    = r <= margin
+    near_bottom = r >= rows - 1 - margin
+    near_left   = c <= margin
+    near_right  = c >= cols - 1 - margin
+    return (near_top or near_bottom) and (near_left or near_right)
+
 # --------- MAIN PENALTY MECHANICS and ALGORITHMS -----------------------------------------
 def reflex_evaluation(
         grid, pac_tile, action, ghosts, weights,
@@ -215,7 +252,7 @@ def reflex_evaluation(
 
         # rem in [0,1], where 1 = just ate power, 0 = not frightened / about to expire
         rem = (frightened_timer / float(frightened_frames)*2+1) if frightened_frames > 0 else 0
-        urgency = 2.0 - rem  # grows as timer approaches 0
+        urgency = 1.5 - rem  # grows as timer approaches 0
         # print(urgency)
 
         # Blend between "avoid using now" and "use soon"
@@ -252,6 +289,29 @@ def reflex_evaluation(
             idx = len(recent) - 1 - recent.index((nr, nc))  # 0 = most recent
             # geometric decay: most recent gets full base, older visits decay
             evf -= breadcrumb_base * (breadcrumb_decay ** idx)
+
+
+    # Penalty. Corner trap avoidance (corners/dead-ends) when ghosts are not frightened ---
+    active_ghosts = [(gr, gc) for (gr, gc, fr) in ghost_tiles if not fr]
+    if active_ghosts:
+        # Only punish if at least one ghost is active (not frightened)
+        in_deadend = is_deadend_tile(grid, nr, nc)
+        # in_corner  = (not in_deadend) and is_corner_tile(grid, nr, nc)  # dead-end stronger; don't double-count
+        in_corner = is_corner_tile(grid, nr, nc, margin=2)   # or corner_margin=2 for the quadrant version
+
+        if in_deadend or in_corner:
+            # Base penalty
+            trap_pen = (weights.get("deadend_penalty", 120.0) if in_deadend
+                        else weights.get("corner_penalty", 60.0))
+
+            # Optionally scale by nearest active ghost distance (closer ghost => harsher penalty)
+            if weights.get("trap_scale_by_ghost_proximity", True):
+                min_g = min(manhattan(nr, nc, gr, gc) for (gr, gc) in active_ghosts)
+                # Scale factor in (0, 1]; at distance 0/1 it's ~1, decays with distance
+                scale = 1.0 / (1.0 + 0.6 * max(0, min_g - 1))
+                trap_pen *= scale
+
+            evf -= trap_pen
 
     # Slight nudge toward actually eating something immediately
     # (these are tiny because you'll also get score from your game logic)
@@ -641,7 +701,9 @@ def run_single_game_telemetry(
 ) -> dict:
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
-    random.seed(seed)
+    # seed = random.seed(seed)
+    seed = random.randint(0, 10000)
+    # print(seed)
 
     if headless:
         os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
