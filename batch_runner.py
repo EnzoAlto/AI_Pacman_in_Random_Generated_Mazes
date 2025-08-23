@@ -1,6 +1,5 @@
-##!/usr/bin/env python3
-import argparse, csv, os, time
-from Pacman_AI_LT2 import run_single_game_telemetry
+#!/usr/bin/env python3
+import argparse, csv, os, time, importlib
 
 def main():
     p = argparse.ArgumentParser(description="Batch-run Pacman_AI_LT2 episodes with telemetry.")
@@ -10,7 +9,16 @@ def main():
     p.add_argument("--max_moves", type=int, default=None, help="DNF cap per game (moves)")
     p.add_argument("--headless", action="store_true", help="Run without a window for speed")
     p.add_argument("--csv", default="pacman_runs.csv", help="Output CSV path")
+    p.add_argument("--module", default="Pacman_AI_LT2", help="Which Pacman module to use")
     args = p.parse_args()
+
+    # Dynamically import the chosen module
+    try:
+        pacman_mod = importlib.import_module(args.module)
+    except ImportError as e:
+        raise SystemExit(f"Error: Could not import module {args.module}: {e}")
+
+    run_single_game_telemetry = pacman_mod.run_single_game_telemetry
 
     new_file = not os.path.exists(args.csv)
     fields = ["i","seed","status","score","elapsed_sec","moves",

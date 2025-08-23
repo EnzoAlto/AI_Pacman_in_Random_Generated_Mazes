@@ -2,6 +2,7 @@ import pygame, sys, os
 import random
 from dataclasses import dataclass, asdict
 import time, random, os
+from collections import deque
 
 # -------------- TELEMETRI API for Data Logging ---------------------------
 @dataclass
@@ -23,7 +24,7 @@ MAP_TEXT = """
 ####################
 #...############...#
 #.#......o.......#.#
-#.###.##########.#.#
+#.###.########.###.#
 #........P.........#
 #.#######..#######.#
 #..o..........o....#
@@ -126,8 +127,8 @@ AI_CONTROL = True   # set False to go back to keyboard control
 
 REFLEX_WEIGHTS = {
     "stop_penalty": 250.0,      # discourage standing still
-    "ghost_close_penalty": 120.0, # penalty if a non-frightened ghost within dist <= 1
-    "ghost_near_penalty": 40.0,   # penalty if a non-frightened ghost within dist == 2
+    "ghost_close_penalty": 200.0, # penalty if a non-frightened ghost within dist <= 1. Maximum Caution to avoid Ghosts right beside pacman
+    "ghost_near_penalty": 30.0,   # penalty if a non-frightened ghost within dist == 2. Increases Caution for Approaching Ghosts
     "food_gain": 2.5,           # 1 / (1 + min_food_dist)
     "capsule_gain": 2.5,        # 1 / (1 + min_capsule_dist)
     "scared_ghost_gain": 0,   # 1 / (1 + min_scared_ghost_dist)
@@ -161,7 +162,11 @@ def tiles_of_type(grid, target):
     return [(rr, cc) for rr, row in enumerate(grid) for cc, v in enumerate(row) if v == target]
 
 # --------- MAIN PENALTY MECHANICS and ALGORITHMS -----------------------------------------
-def reflex_evaluation(grid, pac_tile, action, ghosts, weights,frightened_timer=0, frightened_frames=1): # Scores which legal action is best. 
+def reflex_evaluation(
+        grid, pac_tile, action, ghosts, weights,
+        frightened_timer=0, frightened_frames=1, # Conservative Pacman key Parameters
+        history=None, breadcrumb_base=0.6, breadcrumb_decay=0.85, breadcrumb_k=10, # Breadcrumb memory key Parameters
+        ): # Scores which legal action is best. 
     """Higher is better."""
     (pr, pc) = pac_tile
     (dx, dy) = action
@@ -169,41 +174,42 @@ def reflex_evaluation(grid, pac_tile, action, ghosts, weights,frightened_timer=0
 
     evf = 0.0
 
-    # Step cost (optional shaping)
+    # Penalty. Step cost (optional shaping)
     evf -= weights["step_cost"]
 
-    # Stop penalty
+    # Penalty. Stop penalty
     if (dx, dy) == (0, 0):
         evf -= weights["stop_penalty"]
 
-    # --- Food feature: closer to nearest pellet is better
+    # Penalty. Food feature: closer to nearest pellet is better
     pellets = tiles_of_type(grid, PELLET)
     if pellets:
         min_food = min(manhattan(nr, nc, fr, fc) for (fr, fc) in pellets)
         evf += weights["food_gain"] * (1.0 / (1.0 + min_food))
 
-    # --- Capsule feature: encourage grabbing POWER
+    # Penalty. Capsule feature: encourage grabbing POWER
     capsules = tiles_of_type(grid, POWER)
     if capsules:
         min_caps = min(manhattan(nr, nc, cr, cc) for (cr, cc) in capsules) # gets closest distanec between pacman and capsules
 
         # rem in [0,1], where 1 = just ate power, 0 = not frightened / about to expire
-        rem = (frightened_timer / float(frightened_frames)) if frightened_frames > 0 else -1
-        urgency = 1.0 - rem  # grows as timer approaches 0
-        
+        rem = (frightened_timer / float(frightened_frames)*2+1) if frightened_frames > 0 else 0
+        urgency = 2.0 - rem  # grows as timer approaches 0
+        # print(urgency)
 
         # Blend between "avoid using now" and "use soon"
         w_fright = weights.get("capsule_gain_while_frightened", 0.0)
         w_active = weights["capsule_gain"]
         cap_w = (1.0 - urgency) * w_fright + urgency * w_active
-        print(cap_w * (1.0 / (1.0 + min_caps)))
+        
+        # print(cap_w * (1.0 / (1.0 + min_caps)))
         evf += cap_w * (1.0 / (1.0 + min_caps))
         # evf += weights["capsule_gain"] * (1.0 / (1.0 + min_caps))
 
-    # --- Ghost proximity: avoid active ghosts, chase scared ones
+    # Penalty. Ghost proximity: avoid active ghosts, chase scared ones
     ghost_tiles = [ (int(g.y // TILE_SIZE), int(g.x // TILE_SIZE), g.frightened) for g in ghosts ]
 
-    # penalties for active ghosts
+    # Penalty. penalties for active ghosts. Behvaior of pacman to run away from ghosts
     for (gr, gc, frightened) in ghost_tiles:
         d = manhattan(nr, nc, gr, gc)
         if not frightened:
@@ -212,14 +218,19 @@ def reflex_evaluation(grid, pac_tile, action, ghosts, weights,frightened_timer=0
             elif d == 2:
                 evf -= weights["ghost_near_penalty"]
 
-    # small incentive to approach scared ghosts
+    # Penalty. small incentive to approach scared ghosts
     scared_positions = [(gr, gc) for (gr, gc, fr) in ghost_tiles if fr]
     if scared_positions:
         min_sg = min(manhattan(nr, nc, gr, gc) for (gr, gc) in scared_positions)
         evf += weights["scared_ghost_gain"] * (1.0 / (1.0 + min_sg))
-
-
-   
+    
+    # Penalty. Breadcrumb Penalty. Encourages movement towards unexplored tiles 
+    if history:
+        recent = list(history)[-breadcrumb_k:]            # last K visits
+        if (nr, nc) in recent:
+            idx = len(recent) - 1 - recent.index((nr, nc))  # 0 = most recent
+            # geometric decay: most recent gets full base, older visits decay
+            evf -= breadcrumb_base * (breadcrumb_decay ** idx)
 
     # Slight nudge toward actually eating something immediately
     # (these are tiny because you'll also get score from your game logic)
@@ -244,7 +255,11 @@ def choose_action_reflex(grid, pac, ghosts, weights=REFLEX_WEIGHTS,frightened_ti
     cur_dir = (pac.dir_x, pac.dir_y)
     opposite = (-cur_dir[0], -cur_dir[1]) if cur_dir != (0,0) else None
     for a in legal:
-        s = reflex_evaluation(grid, (pr, pc), a, ghosts, weights, frightened_timer,frightened_frames)
+        # Main Algorithm Caller
+        s = reflex_evaluation(grid, (pr, pc), a, ghosts, weights,
+                              frightened_timer,frightened_frames,
+                              history=getattr(pac, "history", None)
+                              )
         if cur_dir != (0,0) and a == opposite and pac.reverse_count >= max_reverse:
             
             excess = pac.reverse_count - max_reverse + 1
@@ -283,6 +298,7 @@ class Pacman:
         self.radius = TILE_SIZE // 2 - 2
         self._EPS_CENTER = 0.5
         self.reverse_count = 0
+        self.history = deque(maxlen=12)  # recent tiles; tune length 8–20. For Breadcrumb memory
 
     def tile_pos(self):
         return int(self.y // TILE_SIZE), int(self.x // TILE_SIZE)
@@ -365,6 +381,9 @@ class Pacman:
             elif grid[r][c] == POWER:
                 grid[r][c] = EMPTY
                 eaten = 'power'
+
+            if not self.history or self.history[-1] != (r, c): # Recording the visit or tile where pellet has been consumed
+                self.history.append((r, c))
         return eaten
         
 

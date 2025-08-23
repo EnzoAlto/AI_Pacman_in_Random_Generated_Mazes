@@ -140,7 +140,7 @@ REFLEX_WEIGHTS = {
     "ghost_close_penalty": 100, # penalty if a non-frightened ghost within dist <= 1
     "ghost_near_penalty": 100,   # penalty if a non-frightened ghost within dist == 2
     "food_gain": 200,           # 1 / (1 + min_food_dist)
-    "capsule_gain": 0,        # 1 / (1 + min_capsule_dist)
+    "capsule_gain": 100,        # 1 / (1 + min_capsule_dist)
     "scared_ghost_gain": 0,   # 1 / (1 + min_scared_ghost_dist)
     "step_cost": 0.0,           # small negative per move if you want
     "reverse_penalty":200
