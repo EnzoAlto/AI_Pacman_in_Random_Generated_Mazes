@@ -3,6 +3,7 @@ import random
 from dataclasses import dataclass, asdict
 import time, random, os
 from collections import deque
+from math import inf
 
 # -------------- TELEMETRI API for Data Logging ---------------------------
 @dataclass
@@ -20,46 +21,46 @@ class GameResult:
 
 
 # ---------- MAP Editor -----------------------------------
-# MAP_TEXT = """
-# ####################
-# #...############...#
-# #.#......o.......#.#
-# #.###.########.###.#
-# #........P.........#
-# #.#######..#######.#
-# #..o..........o....#
-# #.#######..#######.#
-# #.#..G.G...G.G...#.#
-# #.#.#####..#####.#.#
-# #....o.......o.....#
-# ####################
-# """.strip("\n")
+MAP_TEXT = """
+####################
+#...############...#
+#.#......o.......#.#
+#.###.########.###.#
+#........P.........#
+#.#######..#######.#
+#..o..........o....#
+#.#######..#######.#
+#.#..G.G...G.G...#.#
+#.#.#####..#####.#.#
+#....o.......o.....#
+####################
+""".strip("\n")
 
 # # HARD MAP. PACMAN ALWAYS GETS TRAPPED
-MAP_TEXT = """
-############################
-#............P.............#
-#.##*###.####.###.####.###.#
-#......o............o......#
-#.##.#...########.########.#
-#.##.#......##.........o##.#
-#.##.#.####.##....##.#####.#
-#.##o.......##.#..##.......#
-#.######..#.##.#..##.......#
-#.######..#.##.#..########.#
-#....o..............o......#
-#.#.####.#     # #.###.###.#
-#.#......#GG GG#.#.........#
-#.#.####.###.###.#.###.###.#
-#......o..............o....#
-############################
-""".strip("\n")
+# MAP_TEXT = """
+# ############################
+# #............P.............#
+# #.##*###.####.###.####.###.#
+# #......o............o......#
+# #.##.#...########.########.#
+# #.##.#......##.........o##.#
+# #.##.#.####.##....##.#####.#
+# #.##o.......##.#..##.......#
+# #.######..#.##.#..##.......#
+# #.######..#.##.#..########.#
+# #....o..............o......#
+# #.#.####.#     # #.###.###.#
+# #.#......#GG GG#.#.........#
+# #.#.####.###.###.#.###.###.#
+# #......o..............o....#
+# ############################
+# """.strip("\n")
 
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
 # FPS = 60   # for testing normal pace
-# FPS = 120  # for rapid testing AI agents
-FPS = 180  # for Faster rapid testing AI agents
+FPS = 120  # for rapid testing AI agents
+# FPS = 180  # for Faster rapid testing AI agents
 GHOST_SPRITE = 'ghost.png'  # to determine hitbox of pacman and ghosts
 CAPTURE_RADIUS = TILE_SIZE * 0.45
 
@@ -75,8 +76,6 @@ PACMAN_C= (255, 255, 0)
 
 # Defining How the map generator recognizes the element
 CHAR2TILE = {'#': WALL, '.': PELLET, ' ': EMPTY, 'o':POWER}
-
-
 
 # --- Map parsing -----------------------------------------------------------------
 def load_map_from_text(txt):
@@ -129,9 +128,9 @@ REFLEX_WEIGHTS = {
     "stop_penalty": 250.0,      # discourage standing still
     "ghost_close_penalty": 200.0, # penalty if a non-frightened ghost within dist <= 1. Maximum Caution to avoid Ghosts right beside pacman
     "ghost_near_penalty": 30.0,   # penalty if a non-frightened ghost within dist == 2. Increases Caution for Approaching Ghosts
-    "food_gain": 5.5,           # 1 / (1 + min_food_dist)
-    "capsule_gain": 5.5,        # 1 / (1 + min_capsule_dist)
-    "scared_ghost_gain": 0,   # 1 / (1 + min_scared_ghost_dist)
+    "food_gain": 2.5,           # 1 / (1 + min_food_dist)
+    "capsule_gain": 2.5,        # 1 / (1 + min_capsule_dist)
+    "scared_ghost_gain": 10,   # 1 / (1 + min_scared_ghost_dist)
     "step_cost": 0.0,           # small negative per move if you want
     "reverse_penalty":200
 }
@@ -161,11 +160,11 @@ def successor_tile(r, c, dx, dy, grid):
 def tiles_of_type(grid, target):
     return [(rr, cc) for rr, row in enumerate(grid) for cc, v in enumerate(row) if v == target]
 
-# --------- MAIN PENALTY MECHANICS and ALGORITHMS -----------------------------------------
+# --------- MAIN PENALTY MECHANICS and ALGORITHMS: Reflex Agent -----------------------------------------
 def reflex_evaluation(
         grid, pac_tile, action, ghosts, weights,
         frightened_timer=0, frightened_frames=1, # Conservative Pacman key Parameters
-        history=None, breadcrumb_base=0.85, breadcrumb_decay=0.95, breadcrumb_k=30, # Breadcrumb memory key Parameters
+        history=None, breadcrumb_base=0.6, breadcrumb_decay=0.85, breadcrumb_k=10, # Breadcrumb memory key Parameters
         ): # Scores which legal action is best. 
     """Higher is better."""
     (pr, pc) = pac_tile
@@ -284,6 +283,192 @@ def choose_action_reflex(grid, pac, ghosts, weights=REFLEX_WEIGHTS,frightened_ti
         pac.reverse_count = 0
     
     return legal[idx]
+
+# ----- MAIN PENALTY MECHANICS and ALGORITHMS: Expectimax AI Agent -------------------------------------------
+def eval_state(grid, pr, pc, ghosts, weights, frightened_timer=0, frightened_frames=1,
+               history=None, breadcrumb_base=0.85, breadcrumb_decay=0., breadcrumb_k=10,
+               ):
+    """Fast heuristic for a state (no action). Higher is better for Pac-Man."""
+    ev = 0.0
+
+    # History: Penalty on rexploring the same tiles
+    if history:
+        recent = list(history)[-breadcrumb_k:]
+        if (pr, pc) in recent:
+            idx = len(recent) - 1 - recent.index((pr,pc))
+            # print(breadcrumb_base * (breadcrumb_decay ** idx))
+            ev -= breadcrumb_base * (breadcrumb_decay ** idx)
+
+    # Food: closer is better
+    pellets = tiles_of_type(grid, PELLET)
+    if pellets:
+        min_food = min(abs(pr-r)+abs(pc-c) for (r,c) in pellets)
+        ev += weights.get("food_gain", 0.0) * (1.0 / (1.0 + min_food))
+
+    # Capsules: simple urgency shaping (optional)
+    capsules = tiles_of_type(grid, POWER)
+    if capsules:
+        min_caps = min(abs(pr-r)+abs(pc-c) for (r,c) in capsules)
+        rem = (frightened_timer / float(frightened_frames)*2 +1) if frightened_frames > 0 else 0.0
+        urgency = 2.0 - rem
+        w_fright = weights.get("capsule_gain_while_frightened", 0.0)
+        w_active = weights.get("capsule_gain", 0.0)
+        cap_w = (1.0 - urgency) * w_fright + urgency * w_active
+        ev += cap_w * (1.0 / (1.0 + min_caps))
+    
+    # Ghost proximity
+    for g in ghosts:
+        gr, gc = int(g.y//TILE_SIZE), int(g.x//TILE_SIZE)
+        d = abs(pr-gr)+abs(pc-gc)
+        if not g.frightened:
+            if d <= 1:
+                ev -= weights.get("ghost_close_penalty", 0.0)
+            elif d == 2:
+                ev -= weights.get("ghost_near_penalty", 0.0)
+        else:
+            ev += weights.get("scared_ghost_gain", 0.0) * (1.0 / (1.0 + d))
+
+    return ev
+
+def ghost_legal_actions(grid, g):
+    """Ghost moves (no STOP); fall back to STOP if boxed in."""
+    acts = []
+    r, c = int(g.y//TILE_SIZE), int(g.x//TILE_SIZE)
+    for (dx, dy) in [(0,-1),(1,0),(0,1),(-1,0)]:
+        nr, nc = r+dy, c+dx
+        if 0 <= nr < len(grid) and 0 <= nc < len(grid[0]) and grid[nr][nc] != WALL:
+            acts.append((dx,dy))
+    return acts or [(0,0)]
+
+def pack_ghosts_positions(ghosts, gpos):
+    """Create lightweight ghost views at gpos = [(r,c,fright), ...]."""
+    class GView:
+        __slots__=("y","x","frightened")
+        def __init__(self, r, c, fr):
+            self.y = (r+0.5)*TILE_SIZE
+            self.x = (c+0.5)*TILE_SIZE
+            self.frightened = fr
+    return [GView(r,c,fr) for (r,c,fr) in gpos]
+
+# Reduces the number of branching possibilities to speed up run.
+# Averages only the top-k ghoist moves towards their target (or away if frightened) instead of all 4 ghosts
+def ghost_topk_actions(grid, g, pr, pc, k=2):
+    """Return up to k 'most likely' ghost moves."""
+    acts = ghost_legal_actions(grid, g)
+    if g.frightened:
+        # pick moves that maximize distance from Pac-Man
+        scored = []
+        r, c = int(g.y//TILE_SIZE), int(g.x//TILE_SIZE)
+        for dx,dy in acts:
+            nr, nc = r+dy, c+dx
+            d = abs(nr-pr)+abs(nc-pc)
+            scored.append((d, (dx,dy)))
+        scored.sort(reverse=True)   # farthest first
+    else:
+        # pick moves that minimize distance to ghost's chase target
+        rows_cols = (len(grid), len(grid[0]))
+        try:
+            tr, tc = g.target_tile(grid, pr, pc, 0, 0, g, rows_cols)
+        except Exception:
+            tr, tc = pr, pc
+        scored = []
+        r, c = int(g.y//TILE_SIZE), int(g.x//TILE_SIZE)
+        for dx,dy in acts:
+            nr, nc = r+dy, c+dx
+            d = abs(nr-tr)+abs(nc-tc)
+            scored.append((d, (dx,dy)))
+        scored.sort()               # closest first
+    return [a for _,a in scored[:k]] or [(0,0)]
+
+
+def expectimax_decision(grid, pac, ghosts, weights, depth=2, 
+                        frightened_timer=0, frightened_frames=1, 
+                        history=None, breadcrumb_base=0.6, breadcrumb_decay=0.85, breadcrumb_k=10,
+                        stochastic_ghosts=True):
+    """
+    Returns best (dx,dy) via depth-limited expectimax.
+    Order per ply: Pac (max) -> G0 (chance) -> G1 ... -> Gk -> depth-1.
+    """
+    pr0, pc0 = pac.tile_pos()
+    G = len(ghosts)
+    root_gpos = tuple((int(g.y//TILE_SIZE), int(g.x//TILE_SIZE), g.frightened) for g in ghosts)
+    root_hist = tuple(history) if history else tuple()
+
+    from math import inf
+    from functools import lru_cache
+
+    @lru_cache(maxsize = 200000)
+    def V_max(pr, pc, gpos, d, hist):
+        if d == 0:
+            return eval_state(
+                grid, pr, pc, pack_ghosts_positions(ghosts, gpos), weights,
+                frightened_timer, frightened_frames,
+                history=hist, breadcrumb_base=breadcrumb_base,
+                breadcrumb_decay=breadcrumb_decay, breadcrumb_k=breadcrumb_k
+            )
+        best = -inf
+        # Pac-Man chooses action; extend history with the successor tile
+        for a in get_legal_actions(grid, pr, pc):
+            nr, nc = successor_tile(pr, pc, a[0], a[1], grid)
+            # extend hypothetical breadcrumb (cap to k so cache keys stay small)
+            if hist:
+                new_hist = (*hist[-(breadcrumb_k-1):], (nr, nc))
+            else:
+                new_hist = ((nr, nc),)
+            v = V_chance(0, nr, nc, gpos, d, new_hist)
+            if v > best: best = v
+        return best
+
+    @lru_cache(maxsize = 200000)
+    def V_chance(gi, pr, pc, gpos, d, hist):
+        if gi >= G:
+            return V_max(pr, pc, gpos, d-1, hist)
+
+        # deterministic “greedy toward target” (cheap minimax-ish) if wanted
+        if not stochastic_ghosts:
+            g = ghosts[gi]
+            rows_cols = (len(grid), len(grid[0]))
+            try:
+                tr, tc = g.target_tile(grid, pr, pc, pac.dir_x, pac.dir_y, ghosts[0] if ghosts else None, rows_cols)
+            except Exception:
+                tr, tc = pr, pc
+            gr, gc, fr = gpos[gi]
+            best_d, best_a = inf, (0,0)
+            for a in ghost_legal_actions(grid, g):
+                nr, nc = gr + a[1], gc + a[0]
+                dman = abs(nr-tr)+abs(nc-tc)
+                if dman < best_d: best_d, best_a = dman, a
+            gnext = list(gpos); gnext[gi] = (gr+best_a[1], gc+best_a[0], fr)
+            return V_chance(gi+1, pr, pc, tuple(gnext), d, hist)
+
+        # stochastic: uniform over legal ghost moves
+        gr, gc, fr = gpos[gi]
+        # legal = ghost_legal_actions(grid, ghosts[gi])
+        legal = ghost_topk_actions(grid, ghosts[gi], pr, pc, k=2)  # try k=2 or even 1
+        p = 1.0/len(legal)
+        exp = 0.0
+        for a in legal:
+            gnext = list(gpos); gnext[gi] = (gr+a[1], gc+a[0], fr)
+            exp += p * V_chance(gi+1, pr, pc, tuple(gnext), d, hist)
+        return exp
+
+    # root action choice
+    legal = get_legal_actions(grid, pr0, pc0)
+    if not legal: return (0,0)
+    best_val, best = -inf, []
+    for a in legal:
+        nr, nc = successor_tile(pr0, pc0, a[0], a[1], grid)
+        # root history extended with hypothetical first move
+        if root_hist:
+            new_hist = (*root_hist[-(breadcrumb_k-1):], (nr, nc))
+        else:
+            new_hist = ((nr, nc),)
+        v = V_chance(0, nr, nc, root_gpos, depth, new_hist)
+        if v > best_val: best_val, best = v, [a]
+        elif v == best_val: best.append(a)
+    return random.choice(best)
+
+
 
 # --- Entities: PACMAN ------------------------------------------------
 class Pacman:
@@ -655,7 +840,13 @@ def run_single_game_telemetry(
                 running = False
 
         if AI_CONTROL and pac._is_centered():
-            dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS, frightened_timer, FRIGHTENED_FRAMES)
+            # dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS, frightened_timer, FRIGHTENED_FRAMES)
+            dx, dy = dx, dy = expectimax_decision(grid, pac, ghosts, REFLEX_WEIGHTS,depth=2,
+                                                  frightened_timer=frightened_timer,frightened_frames=FRIGHTENED_FRAMES,
+                                                  history=getattr(pac, "history", None),           # << add this
+                                                  breadcrumb_base=0.95, breadcrumb_decay=0.75, breadcrumb_k=15,
+                                                  stochastic_ghosts=True)
+
             pac.set_desired_dir(dx, dy, grid)
 
         eaten = pac.update(grid)
@@ -814,7 +1005,12 @@ def main():
         # ------ AI control. Overwrite Key movement commands based on AI Decisions -------------------
         if AI_CONTROL:
             if pac._is_centered():
-                dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS, frightened_timer, FRIGHTENED_FRAMES)
+                # dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS, frightened_timer, FRIGHTENED_FRAMES)
+                dx, dy = dx, dy = expectimax_decision(grid, pac, ghosts, REFLEX_WEIGHTS,depth=2,
+                                                  frightened_timer=frightened_timer,frightened_frames=FRIGHTENED_FRAMES,
+                                                  history = getattr(pac, "history", None),
+                                                  breadcrumb_base=0.95, breadcrumb_decay=0.75, breadcrumb_k=15,
+                                                  stochastic_ghosts=True)
                 pac.set_desired_dir(dx, dy, grid)
 
         # Pac-Man update + consume mechanic 
