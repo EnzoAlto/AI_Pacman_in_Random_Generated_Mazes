@@ -59,8 +59,8 @@ TILE_SIZE = 30
 # FPS = 60   # for testing normal pace
 # FPS = 120  # for rapid testing AI agents
 FPS = 180  # for Faster rapid testing AI agents
-GHOST_SPRITE = 'ghost.png'
-CAPTURE_RADIUS = TILE_SIZE * 0.45 # to determine hitbox of pacman and ghosts
+GHOST_SPRITE = 'ghost.png'  # to determine hitbox of pacman and ghosts
+CAPTURE_RADIUS = TILE_SIZE * 0.45
 
 # Tile codes
 EMPTY, WALL, PELLET, POWER = 0, 1, 2, 3
@@ -124,26 +124,15 @@ def overlap_capture(ghost, pac, radius=CAPTURE_RADIUS):
 # --- Utilities: Reflex Agent "AI" config ------------------------------------
 AI_CONTROL = True   # set False to go back to keyboard control
 
-# REFLEX_WEIGHTS = {
-#     "stop_penalty": 250.0,      # discourage standing still
-#     "ghost_close_penalty": 120.0, # penalty if a non-frightened ghost within dist <= 1
-#     "ghost_near_penalty": 40.0,   # penalty if a non-frightened ghost within dist == 2
-#     "food_gain": 2.5,           # 1 / (1 + min_food_dist)
-#     "capsule_gain": 2.5,        # 1 / (1 + min_capsule_dist)
-#     "scared_ghost_gain": 0,   # 1 / (1 + min_scared_ghost_dist)
-#     "step_cost": 0.0,           # small negative per move if you want
-#     "reverse_penalty":100
-# }
-
 REFLEX_WEIGHTS = {
-    "stop_penalty": 100,      # discourage standing still
-    "ghost_close_penalty": 100, # penalty if a non-frightened ghost within dist <= 1
-    "ghost_near_penalty": 100,   # penalty if a non-frightened ghost within dist == 2
-    "food_gain": 200,           # 1 / (1 + min_food_dist)
-    "capsule_gain": 0,        # 1 / (1 + min_capsule_dist)
+    "stop_penalty": 250.0,      # discourage standing still
+    "ghost_close_penalty": 120.0, # penalty if a non-frightened ghost within dist <= 1
+    "ghost_near_penalty": 40.0,   # penalty if a non-frightened ghost within dist == 2
+    "food_gain": 2.5,           # 1 / (1 + min_food_dist)
+    "capsule_gain": 2.5,        # 1 / (1 + min_capsule_dist)
     "scared_ghost_gain": 0,   # 1 / (1 + min_scared_ghost_dist)
     "step_cost": 0.0,           # small negative per move if you want
-    "reverse_penalty":200
+    "reverse_penalty":100
 }
 
 #------ Utilities: Game State Loggers for AI Component ---------------------
@@ -171,7 +160,8 @@ def successor_tile(r, c, dx, dy, grid):
 def tiles_of_type(grid, target):
     return [(rr, cc) for rr, row in enumerate(grid) for cc, v in enumerate(row) if v == target]
 
-def reflex_evaluation(grid, pac_tile, action, ghosts, weights): # Scores which legal action is best. # MAIN PENALTY MECHANICS and ALGORITHMS
+# --------- MAIN PENALTY MECHANICS and ALGORITHMS -----------------------------------------
+def reflex_evaluation(grid, pac_tile, action, ghosts, weights,frightened_timer=0, frightened_frames=1): # Scores which legal action is best. 
     """Higher is better."""
     (pr, pc) = pac_tile
     (dx, dy) = action
@@ -195,8 +185,20 @@ def reflex_evaluation(grid, pac_tile, action, ghosts, weights): # Scores which l
     # --- Capsule feature: encourage grabbing POWER
     capsules = tiles_of_type(grid, POWER)
     if capsules:
-        min_caps = min(manhattan(nr, nc, cr, cc) for (cr, cc) in capsules)
-        evf += weights["capsule_gain"] * (1.0 / (1.0 + min_caps))
+        min_caps = min(manhattan(nr, nc, cr, cc) for (cr, cc) in capsules) # gets closest distanec between pacman and capsules
+
+        # rem in [0,1], where 1 = just ate power, 0 = not frightened / about to expire
+        rem = (frightened_timer / float(frightened_frames)) if frightened_frames > 0 else -1
+        urgency = 1.0 - rem  # grows as timer approaches 0
+        
+
+        # Blend between "avoid using now" and "use soon"
+        w_fright = weights.get("capsule_gain_while_frightened", 0.0)
+        w_active = weights["capsule_gain"]
+        cap_w = (1.0 - urgency) * w_fright + urgency * w_active
+        print(cap_w * (1.0 / (1.0 + min_caps)))
+        evf += cap_w * (1.0 / (1.0 + min_caps))
+        # evf += weights["capsule_gain"] * (1.0 / (1.0 + min_caps))
 
     # --- Ghost proximity: avoid active ghosts, chase scared ones
     ghost_tiles = [ (int(g.y // TILE_SIZE), int(g.x // TILE_SIZE), g.frightened) for g in ghosts ]
@@ -216,6 +218,9 @@ def reflex_evaluation(grid, pac_tile, action, ghosts, weights): # Scores which l
         min_sg = min(manhattan(nr, nc, gr, gc) for (gr, gc) in scared_positions)
         evf += weights["scared_ghost_gain"] * (1.0 / (1.0 + min_sg))
 
+
+   
+
     # Slight nudge toward actually eating something immediately
     # (these are tiny because you'll also get score from your game logic)
     if grid[nr][nc] == PELLET:
@@ -225,7 +230,7 @@ def reflex_evaluation(grid, pac_tile, action, ghosts, weights): # Scores which l
     # print(evf)
     return evf
 
-def choose_action_reflex(grid, pac, ghosts, weights=REFLEX_WEIGHTS): 
+def choose_action_reflex(grid, pac, ghosts, weights=REFLEX_WEIGHTS,frightened_timer=0, frightened_frames=1): 
     pr, pc = pac.tile_pos()
     legal = get_legal_actions(grid, pr, pc)
 
@@ -233,13 +238,13 @@ def choose_action_reflex(grid, pac, ghosts, weights=REFLEX_WEIGHTS):
     # opposite = (-pac.dir_x, -pac.dir_y) if (pac.dir_x, pac.dir_y) != (0,0) else None
     # legal = [a for a in legal if a != opposite]  # uncomment to forbid immediate reversals
 
-    # --- Reverse Score Penalt: Count + Penalty Mechanic --------------------
+    # --- Reverse Score Penalty: Count + Penalty Mechanic --------------------
     scores = []
     max_reverse = 2 # How much allowable reverse before adding penalty
     cur_dir = (pac.dir_x, pac.dir_y)
     opposite = (-cur_dir[0], -cur_dir[1]) if cur_dir != (0,0) else None
     for a in legal:
-        s = reflex_evaluation(grid, (pr, pc), a, ghosts, weights)
+        s = reflex_evaluation(grid, (pr, pc), a, ghosts, weights, frightened_timer,frightened_frames)
         if cur_dir != (0,0) and a == opposite and pac.reverse_count >= max_reverse:
             
             excess = pac.reverse_count - max_reverse + 1
@@ -631,7 +636,7 @@ def run_single_game_telemetry(
                 running = False
 
         if AI_CONTROL and pac._is_centered():
-            dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS)
+            dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS, frightened_timer, FRIGHTENED_FRAMES)
             pac.set_desired_dir(dx, dy, grid)
 
         eaten = pac.update(grid)
@@ -790,7 +795,7 @@ def main():
         # ------ AI control. Overwrite Key movement commands based on AI Decisions -------------------
         if AI_CONTROL:
             if pac._is_centered():
-                dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS)
+                dx, dy = choose_action_reflex(grid, pac, ghosts, REFLEX_WEIGHTS, frightened_timer, FRIGHTENED_FRAMES)
                 pac.set_desired_dir(dx, dy, grid)
 
         # Pac-Man update + consume mechanic 
