@@ -3,6 +3,8 @@ import random
 from dataclasses import dataclass, asdict
 import time, random, os
 from collections import deque
+from Pacman_Maze_Gen import generate_pacman_map
+
 
 # -------------- TELEMETRI API for Data Logging ---------------------------
 @dataclass
@@ -36,24 +38,32 @@ class GameResult:
 # """.strip("\n")
 
 # HARD MAP. PACMAN ALWAYS GETS TRAPPED
-MAP_TEXT = """
-############################
-#............P.............#
-#.##*###.####.###.####.###.#
-#......o............o......#
-#.##.#...########.########.#
-#.##.#......##..........##.#
-#.##.#.####.##....##.#####.#
-#.##........##.#..##.......#
-#.######..#.##.#..##.......#
-#.######..#.##.#..########.#
-#..........................#
-#.#.####.#     # #.###.###.#
-#.#..o...#GG GG#.#...o.....#
-#.#.####.###.###.#.###.###.#
-#..........................#
-############################
-""".strip("\n")
+# MAP_TEXT = """
+# ############################
+# #............P.............#
+# #.##*###.####.###.####.###.#
+# #......o............o......#
+# #.##.#...########.########.#
+# #.##.#......##..........##.#
+# #.##.#.####.##....##.#####.#
+# #.##........##.#..##.......#
+# #.######..#.##.#..##.......#
+# #.######..#.##.#..########.#
+# #..........................#
+# #.#.####.#     # #.###.###.#
+# #.#..o...#.. ..#.#...o.....#ge
+# #.#.####.###.###.#.###.###.#
+# #..........................#
+# ############################
+# """.strip("\n")
+
+# CREATE MAP. GENERATES A NEW MAP EVERY RUN
+seed_in = random.randint(0, 2**32 - 1)
+seed_in
+GENERATE_MAP = True # Set True to Generate New Map Every Run
+MAP_TEXT = generate_pacman_map(width=17, height=12, num_capsules=4, num_ghosts=4, symmetry="vertical", seed=seed_in)
+print(MAP_TEXT)
+
 
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
@@ -223,7 +233,7 @@ def is_corner_tile(grid, r, c, margin=3): # marin is how many tiles to consider 
 def reflex_evaluation(
         grid, pac_tile, action, ghosts, weights,
         frightened_timer=0, frightened_frames=1, # Conservative Pacman key Parameters
-        history=None, breadcrumb_base=1, breadcrumb_decay=0.95, breadcrumb_k=30, # Breadcrumb memory key Parameters
+        history=None, breadcrumb_base=10, breadcrumb_decay=0.95, breadcrumb_k=12, # Breadcrumb memory key Parameters
         ): # Scores which legal action is best. 
     """Higher is better."""
     (pr, pc) = pac_tile
@@ -479,7 +489,7 @@ class Ghost:
         self.spawn_r, self.spawn_c = r, c
         self.dir_x = 0
         self.dir_y = 0
-        self.speed = 2.0
+        self.speed = 1.75
         self.sprite = sprite
         self._EPS_CENTER = 0.5
         self.frightened = False
@@ -699,6 +709,8 @@ def run_single_game_telemetry(
     max_moves: int | None = None,
     headless: bool = True
 ) -> dict:
+    global MAP_TEXT, GENERATE_MAP
+
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
     # seed = random.seed(seed)
@@ -709,6 +721,10 @@ def run_single_game_telemetry(
         os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     pygame.init()
 
+    if GENERATE_MAP:
+        seed_in = random.randint(0, 2**32 - 1)
+        MAP_TEXT = generate_pacman_map(width=17, height=12, num_capsules=4, num_ghosts=4, symmetry="vertical", seed=seed_in)
+        
     grid, pac, ghosts, ROWS, COLS, WIDTH, HEIGHT = make_game_from_text(MAP_TEXT)
 
     screen = None
@@ -844,6 +860,7 @@ def run_single_game_telemetry(
 
 def main():
     pygame.init()
+    
     grid, pac, ghosts, ROWS, COLS, WIDTH, HEIGHT = make_game_from_text(MAP_TEXT)
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Pac-Man (inline map, simple)")
@@ -863,6 +880,12 @@ def main():
 
     def reset_game():
         nonlocal grid, pac, ghosts, pellets_left, ROWS, COLS, WIDTH, HEIGHT, frightened_timer, ghost_chain, score
+        global MAP_TEXT, GENERATE_MAP
+
+        if GENERATE_MAP:
+            seed_in = random.randint(0, 2**32 - 1)
+            MAP_TEXT = generate_pacman_map(width=17, height=12, num_capsules=4, num_ghosts=4, symmetry="vertical", seed=seed_in)
+        
         grid, pac_spawn, ghost_spawns = load_map_from_text(MAP_TEXT)
         pac = Pacman(*pac_spawn)
         spr = ghosts[0].sprite if ghosts else None
