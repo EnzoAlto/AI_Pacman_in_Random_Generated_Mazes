@@ -20,40 +20,40 @@ class GameResult:
 
 
 # ---------- MAP Editor -----------------------------------
-MAP_TEXT = """
-####################
-#...############...#
-#o#..............#o#
-#.###.########.###.#
-#........P.........#
-#.#######..#######.#
-#..................#
-#.#.#####..#####.#.#
-#.#o.G.G...G.G..o#.#
-#.#.#####..#####.#.#
-#..................#
-####################
-""".strip("\n")
-
-# # HARD MAP. PACMAN ALWAYS GETS TRAPPED
 # MAP_TEXT = """
-# ############################
-# #............P.............#
-# #.##*###.####.###.####.###.#
-# #......o............o......#
-# #.##.#...########.########.#
-# #.##.#......##..........##.#
-# #.##.#.####.##....##.#####.#
-# #.##........##.#..##.......#
-# #.######..#.##.#..##.......#
-# #.######..#.##.#..########.#
-# #..........................#
-# #.#.####.#     # #.###.###.#
-# #.#..o...#GG GG#.#...o.....#
-# #.#.####.###.###.#.###.###.#
-# #..........................#
-# ############################
+# ####################
+# #...############...#
+# #.#..............#.#
+# #.###o########o###.#
+# #........P.........#
+# #.#######..#######.#
+# #..................#
+# #.#.#####..#####.#.#
+# #.#o.G.G...G.G..o#.#
+# #.#.#####..#####.#.#
+# #..................#
+# ####################
 # """.strip("\n")
+
+# HARD MAP. PACMAN ALWAYS GETS TRAPPED
+MAP_TEXT = """
+############################
+#............P.............#
+#.##*###.####.###.####.###.#
+#......o............o......#
+#.##.#...########.########.#
+#.##.#......##..........##.#
+#.##.#.####.##....##.#####.#
+#.##........##.#..##.......#
+#.######..#.##.#..##.......#
+#.######..#.##.#..########.#
+#..........................#
+#.#.####.#     # #.###.###.#
+#.#..o...#GG GG#.#...o.....#
+#.#.####.###.###.#.###.###.#
+#..........................#
+############################
+""".strip("\n")
 
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
@@ -128,17 +128,17 @@ AI_CONTROL = True   # set False to go back to keyboard control
 REFLEX_WEIGHTS = {
     "stop_penalty": 250.0,      # discourage standing still
     "ghost_close_penalty":300.0, # penalty if a non-frightened ghost within dist <= 1. Maximum Caution to avoid Ghosts right beside pacman
-    "ghost_near_penalty":100.0,   # penalty if a non-frightened ghost within dist == 2. Increases Caution for Approaching Ghosts
-    "food_gain": 3.5,           # 1 / (1 + min_food_dist)
-    "capsule_gain": 8,        # 1 / (1 + min_capsule_dist)
-    "scared_ghost_gain": 0,   # 1 / (1 + min_scared_ghost_dist)
+    "ghost_near_penalty":150.0,   # penalty if a non-frightened ghost within dist == 2. Increases Caution for Approaching Ghosts
+    "food_gain": 30,           # 1 / (1 + min_food_dist)
+    "capsule_gain": 80,        # 1 / (1 + min_capsule_dist)
+    "scared_ghost_gain": 10,   # 1 / (1 + min_scared_ghost_dist)
     "step_cost": 0.0,           # small negative per move if you want
     "reverse_penalty":10,
 
     # Corner Trap avoidance
-    "corner_penalty": 200,   # L-shaped pocket
-    "deadend_penalty": 0.0, # single exit
-    "trap_scale_by_ghost_proximity": False, # scale penalty by active ghost proximity
+    "corner_penalty": 0,   # L-shaped pocket
+    "deadend_penalty": 0, # single exit
+    "trap_scale_by_ghost_proximity": True, # scale penalty by active ghost proximity
 }
 
 #------ Utilities: Game State Loggers for AI Component ---------------------
@@ -223,7 +223,7 @@ def is_corner_tile(grid, r, c, margin=3): # marin is how many tiles to consider 
 def reflex_evaluation(
         grid, pac_tile, action, ghosts, weights,
         frightened_timer=0, frightened_frames=1, # Conservative Pacman key Parameters
-        history=None, breadcrumb_base=0.85, breadcrumb_decay=0.95, breadcrumb_k=30, # Breadcrumb memory key Parameters
+        history=None, breadcrumb_base=1, breadcrumb_decay=0.95, breadcrumb_k=30, # Breadcrumb memory key Parameters
         ): # Scores which legal action is best. 
     """Higher is better."""
     (pr, pc) = pac_tile
