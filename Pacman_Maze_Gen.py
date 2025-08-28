@@ -303,4 +303,4 @@ def generate_pacman_map(width=31, height=21, num_capsules=4, num_ghosts=4, symme
 seed_in = random.randint(0, 2**32 - 1)
 seed_in
 MAP_TEXT = generate_pacman_map(width=21, height=10, num_capsules=4, num_ghosts=4, symmetry="vertical", seed=seed_in)
-print(MAP_TEXT)
+# print(MAP_TEXT)

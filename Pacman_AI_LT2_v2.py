@@ -20,46 +20,46 @@ class GameResult:
 
 
 # ---------- MAP Editor -----------------------------------
-MAP_TEXT = """
-####################
-#...############...#
-#.#......o.......#.#
-#.###.########.###.#
-#........P.........#
-#.#######..#######.#
-#..o..........o....#
-#.#.#####..#####.#.#
-#.#..G.G...G.G...#.#
-#.#.#####..#####.#.#
-#....o.......o.....#
-####################
-""".strip("\n")
+# MAP_TEXT = """
+# ####################
+# #...############...#
+# #.#......o.......#.#
+# #.###.########.###.#
+# #........P.........#
+# #.#######..#######.#
+# #..o..........o....#
+# #.#.#####..#####.#.#
+# #.#..G.G...G.G...#.#
+# #.#.#####..#####.#.#
+# #....o.......o.....#
+# ####################
+# """.strip("\n")
 
 # # HARD MAP. PACMAN ALWAYS GETS TRAPPED
-# MAP_TEXT = """
-# ############################
-# #............P.............#
-# #.##*###.####.###.####.###.#
-# #......o............o......#
-# #.##.#...########.########.#
-# #.##.#......##..........##.#
-# #.##.#.####.##....##.#####.#
-# #.##........##.#..##.......#
-# #.######..#.##.#..##.......#
-# #.######..#.##.#..########.#
-# #..........................#
-# #.#.####.#     # #.###.###.#
-# #.#..o...#GG GG#.#...o.....#
-# #.#.####.###.###.#.###.###.#
-# #..........................#
-# ############################
-# """.strip("\n")
+MAP_TEXT = """
+############################
+#............P.............#
+#.##*###.####.###.####.###.#
+#......o............o......#
+#.##.#...########.########.#
+#.##.#......##..........##.#
+#.##.#.####.##....##.#####.#
+#.##........##.#..##.......#
+#.######..#.##.#..##.......#
+#.######..#.##.#..########.#
+#..........................#
+#.#.####.#     # #.###.###.#
+#.#..o...#GG GG#.#...o.....#
+#.#.####.###.###.#.###.###.#
+#..........................#
+############################
+""".strip("\n")
 
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
 # FPS = 60   # for testing normal pace
-# FPS = 120  # for rapid testing AI agents
-FPS = 180  # for Faster rapid testing AI agents
+FPS = 120  # for rapid testing AI agents
+# FPS = 180  # for Faster rapid testing AI agents
 GHOST_SPRITE = 'ghost.png'  # to determine hitbox of pacman and ghosts
 CAPTURE_RADIUS = TILE_SIZE * 0.45
 
@@ -123,7 +123,7 @@ def overlap_capture(ghost, pac, radius=CAPTURE_RADIUS):
     return (dx*dx + dy*dy) <= (radius*radius)
 
 # --- Utilities: Reflex Agent "AI" config ------------------------------------
-AI_CONTROL = True   # set False to go back to keyboard control
+AI_CONTROL = False   # set False to go back to keyboard control
 
 REFLEX_WEIGHTS = {
     "stop_penalty": 250.0,      # discourage standing still
@@ -639,6 +639,8 @@ def run_single_game_telemetry(
     max_moves: int | None = None,
     headless: bool = True
 ) -> dict:
+    global AI_CONTROL
+
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
     random.seed(seed)
@@ -783,6 +785,7 @@ def run_single_game_telemetry(
 def main():
     pygame.init()
     grid, pac, ghosts, ROWS, COLS, WIDTH, HEIGHT = make_game_from_text(MAP_TEXT)
+    global AI_CONTROL  
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Pac-Man (inline map, simple)")
     clock = pygame.time.Clock()

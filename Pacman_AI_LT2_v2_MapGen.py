@@ -68,8 +68,8 @@ MAP_TEXT = generate_pacman_map(width=17, height=12, num_capsules=4, num_ghosts=4
 # --- Config ----------------------------------------------------------------------------------
 TILE_SIZE = 30
 # FPS = 60   # for testing normal pace
-# FPS = 120  # for rapid testing AI agents
-FPS = 180  # for Faster rapid testing AI agents
+FPS = 120  # for rapid testing AI agents
+# FPS = 180  # for Faster rapid testing AI agents
 GHOST_SPRITE = 'ghost.png'  # to determine hitbox of pacman and ghosts
 CAPTURE_RADIUS = TILE_SIZE * 0.45
 
@@ -133,7 +133,7 @@ def overlap_capture(ghost, pac, radius=CAPTURE_RADIUS):
     return (dx*dx + dy*dy) <= (radius*radius)
 
 # --- Utilities: Reflex Agent "AI" config ------------------------------------
-AI_CONTROL = True   # set False to go back to keyboard control
+AI_CONTROL = False   # set False to go back to keyboard control
 
 REFLEX_WEIGHTS = {
     "stop_penalty": 250.0,      # discourage standing still
@@ -709,7 +709,7 @@ def run_single_game_telemetry(
     max_moves: int | None = None,
     headless: bool = True
 ) -> dict:
-    global MAP_TEXT, GENERATE_MAP 
+    global MAP_TEXT, GENERATE_MAP, AI_CONTROL
 
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
@@ -860,7 +860,7 @@ def run_single_game_telemetry(
 
 def main():
     pygame.init()
-    
+    global AI_CONTROL
     grid, pac, ghosts, ROWS, COLS, WIDTH, HEIGHT = make_game_from_text(MAP_TEXT)
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Pac-Man (inline map, simple)")
@@ -880,7 +880,7 @@ def main():
 
     def reset_game():
         nonlocal grid, pac, ghosts, pellets_left, ROWS, COLS, WIDTH, HEIGHT, frightened_timer, ghost_chain, score
-        global MAP_TEXT, GENERATE_MAP
+        global MAP_TEXT, GENERATE_MAP,AI_CONTROL
 
         if GENERATE_MAP:
             seed_in = random.randint(0, 2**32 - 1)
