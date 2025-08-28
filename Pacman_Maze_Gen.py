@@ -219,7 +219,7 @@ def generate_pacman_map(width=31, height=21, num_capsules=4, num_ghosts=4, symme
                                 break
     carve_avenues(grid, row_stride=6, col_stride=8, row_offset=3, col_offset=width//2 % 3)
     enrich_loops(grid, prob=0.20)
-    add_plazas(grid, rate=0.012)
+    add_plazas(grid, rate=0.00)
     
     # 4) Optional symmetry (after loops so corridors remain single-wide)
     if symmetry in ("vertical", "horizontal"):
